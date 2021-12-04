@@ -2,6 +2,7 @@ import pandas as pd
 import random
 import logging
 import sys
+import copy
 
 logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
@@ -14,11 +15,22 @@ class MatchFinder:
         # {course: capacity}
         self.courses = dict()
         self.num_students = 0
+        self.num_courses = 0
 
-    def load(self, student_pref = 'student_pref.csv', courses = 'courses.csv'):
+    def load_from_csv(self, student_pref = 'student_pref.csv', courses = 'courses.csv'):
         self.student_pref = pd.read_csv(student_pref, dtype = 'Int64').fillna(-1).set_index('Student').T.to_dict('list')
+        # Append -1, nonallocation to each student.
+        for student in self.student_pref:
+            self.student_pref[student].append(-1)
+
         df = pd.read_csv(courses, dtype = 'Int64')
         self.courses = dict(zip(df.Course, df.Capacity))
+        self.num_students = len(self.student_pref)
+        self.num_courses = len(self.courses)
+
+    def load(self, student_pref, courses):
+        self.student_pref = student_pref
+        self.courses = courses
         self.num_students = len(self.student_pref)
 
     def match(self):
@@ -26,11 +38,11 @@ class MatchFinder:
 
     def write_output(self, csv_path = 'output.csv'):
         with open(csv_path, 'w') as w:
-            w.write('student,course\n')
+            w.write('Student,Course\n')
             for student,course in self.matching.items():
                 w.write(f'{student},{course}\n')
 
-
+# Random Serial Dictatorship Mechanism
 class RSD(MatchFinder):
     def __init__(self):
         super().__init__()
@@ -56,10 +68,73 @@ class RSD(MatchFinder):
                     self.matching[student] = pref
                     break
             logging.debug(debug_string)
-        print(self.matching)
+        logging.info(sorted(self.matching.items()))
 
 
-r = RSD()
-r.load()
-r.match()
-r.write_output()
+# Student-proposing DA Mechanism
+class StudentProposingDA(MatchFinder):
+    def __init__(self):
+        super().__init__()
+        self.course_pref = dict()
+        self.max_round = 10**6 # Avoid infinite loops due to bugs.
+
+    def randomize_course_prefs(self):
+        student_order = list(range(self.num_students))
+        for course in range(self.num_courses):
+            random.shuffle(student_order)
+            self.course_pref[course] = copy.deepcopy(student_order)
+
+    def match(self):
+        accepted = {course: [] for course in self.courses}
+        need_to_propose = set(self.student_pref.keys())
+        for i in range(self.max_round):
+            logging.debug(f'Round {i}')
+            at_least_one_reject = False
+
+            # Take proposals from each student.
+            received_proposals = {course: [] for course in self.courses}
+            for student in self.student_pref:
+                # Ignore students who prefer not to be matched.
+                if student not in need_to_propose:
+                    continue
+                logging.debug(f'Student {student} proposes {self.student_pref[student][0]}')
+                received_proposals[self.student_pref[student][0]] += [student]
+            need_to_propose = set()
+
+            # Calculate accepted and rejected students.
+            for course in received_proposals:
+                accepted[course].extend(received_proposals[course])
+                accepted[course].sort(key = lambda student: self.course_pref[course].index(student))
+                capacity = self.courses[course]
+                if len(accepted[course]) > capacity:
+                    at_least_one_reject = True
+                    for reject_student in accepted[course][capacity:]:
+                        logging.debug(f'Student {reject_student} rejected.')
+                        self.student_pref[reject_student] = self.student_pref[reject_student][1:]
+                        # If the rejected student now prefers to be unallocated, unallocate them.
+                        if self.student_pref[reject_student][0] == -1:
+                            logging.debug(f'Student {reject_student} prefers deallocation.')
+                            self.matching[reject_student] = -1
+                        else:
+                            need_to_propose.add(reject_student)
+
+                        accepted[course] = accepted[course][0:capacity]
+            # If nobody was rejected, we're done; accept everyone.
+            if not at_least_one_reject:
+                break
+
+        for course in accepted:
+            for student in accepted[course]:
+                self.matching[student] = course
+        logging.info(sorted(self.matching.items()))
+
+
+if __name__ == '__main__':
+    a = RSD()
+    a.load_from_csv()
+    a.match()
+
+    a = StudentProposingDA()
+    a.load_from_csv()
+    a.randomize_course_prefs()
+    a.match()
