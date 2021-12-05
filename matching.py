@@ -4,7 +4,7 @@ import logging
 import sys
 import copy
 
-logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+logging.basicConfig(stream=sys.stderr, level=logging.ERROR)
 
 class MatchFinder:
     def __init__(self):
@@ -86,7 +86,10 @@ class StudentProposingDA(MatchFinder):
 
     def match(self):
         accepted = {course: [] for course in self.courses}
-        need_to_propose = set(self.student_pref.keys())
+        need_to_propose = set(i for i in self.student_pref.keys() if self.student_pref[i][0] != -1)
+        for i in self.student_pref.keys():
+            if self.student_pref[i][0] == -1:
+                self.matching[i] = -1
         for i in range(self.max_round):
             logging.debug(f'Round {i}')
             at_least_one_reject = False
